@@ -139,6 +139,10 @@ bash cmd-tools-django-manage.sh mysite --add-users                      # the de
 bash cmd-tools-django-manage.sh mysite --cancel-users                   # delete them
 ```
 
+On a start or a restart the container tool may print "Unable to start web_extra_daemons" with
+"supervisor.sock no such file": it asked before the web container was ready, and the container starts
+the server by itself a moment later. `--restart` starts it again and waits until it answers.
+
 ### The default accounts
 
 | Account | Address | What it is | Handle in the tests |

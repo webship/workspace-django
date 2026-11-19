@@ -99,6 +99,8 @@ YAMLEOF
 # installed by uv. Written by the Django builder of the workspace. The image's own Python is too old
 # for the current Django line on some releases of the container tool.
 ENV UV_PYTHON_INSTALL_DIR=/opt/python
+# The packages are copied into the project's virtual environment (the cache is on another file system).
+ENV UV_LINK_MODE=copy
 RUN arch="\$(uname -m)" \\
     && curl -sSfL "https://github.com/astral-sh/uv/releases/download/${DJANGO_UV_VERSION}/uv-\${arch}-unknown-linux-gnu.tar.gz" \\
        | tar -xz --strip-components=1 -C /usr/local/bin \\
@@ -330,7 +332,7 @@ function django_manage_tool() {
     echo "" ; echo "Packages:" ;
     ddev exec "uv pip list --python ${DJANGO_ROOT}/.venv/bin/python 2>/dev/null | grep -i -E '^(django|psycopg)' | sed 's/^/   /'" < /dev/null ;
     echo "" ; echo "Apps:" ;
-    django_manage shell -c "\"from django.apps import apps; print('   ' + ', '.join(a.label for a in apps.get_app_configs()))\"" ;
+    django_manage shell -v 0 -c "\"from django.apps import apps; print('   ' + ', '.join(a.label for a in apps.get_app_configs()))\"" ;
     echo "" ; echo "Accounts:" ;
     users=() ;
     django_site accounts list ;
