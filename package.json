@@ -1,0 +1,99 @@
+{
+  "name": "@webship.co/workspace-django",
+  "version": "1.0.0",
+  "description": "Django for Webship Workspace: the builder (`cmd-django-project.sh`, a plain project made with django-admin startproject, with the polls app of the official tutorial on request) and the manage.py tool in every sites folder, the default accounts, the Django admin step pack wired into the testing setup, and its AI items in their folders: two agents, a skill, a command and two prompts.",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/webship/workspace-django.git"
+  },
+  "files": [
+    "dist/src",
+    "ai",
+    "commands",
+    "features",
+    "scripts",
+    "testing",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
+    "test": "npm run build && node --test dist/tests/*.test.js",
+    "lint": "tsc -p tsconfig.json --noEmit"
+  },
+  "workspacePlugin": {
+    "name": "django",
+    "label": "Django",
+    "needs": [
+      [
+        "dev",
+        "test",
+        "sandboxes",
+        "demos"
+      ],
+      "ai-agents",
+      "ai-skills",
+      "ai-commands",
+      "ai-prompts"
+    ],
+    "commands": {
+      "types": [
+        "sites"
+      ],
+      "workspaces": [
+        "dev",
+        "test",
+        "sandboxes",
+        "demos"
+      ],
+      "files": [
+        "commands/cmd-django-project.sh",
+        "commands/cmd-tools-django-manage.sh"
+      ]
+    },
+    "scripts": {
+      "functions": [
+        "scripts/functions/fun-django.sh"
+      ],
+      "args": [
+        "scripts/args/arg-django.sh",
+        "scripts/args/arg-django-manage.sh"
+      ],
+      "machine": [
+        "scripts/django-site.py",
+        "scripts/POLLS-LICENSE",
+        "testing/site.feature"
+      ]
+    },
+    "ai": {
+      "agents": [
+        "ai/agents/django-site-builder.md",
+        "ai/agents/django-tester.md"
+      ],
+      "skills": [
+        "ai/skills/django-scenarios"
+      ],
+      "commands": [
+        "ai/commands/django-test.md"
+      ],
+      "prompts": [
+        "ai/prompts/django-build-and-test.md",
+        "ai/prompts/django-scenarios-for-an-area.md"
+      ]
+    },
+    "features": [
+      "features/django.feature"
+    ]
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@webship.co/workspace-plugin-api": "^1.0.11",
+    "typescript": "^5.9.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
