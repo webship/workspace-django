@@ -88,8 +88,10 @@
       ]
     },
     "features": [
-      "features/django.feature"
-    ]
+      "features/django.feature",
+      "features/django-runtimes.feature"
+    ],
+    "featuresSite": "cmd-django-project.sh ci-django --install --add-users --polls --runtime docker"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

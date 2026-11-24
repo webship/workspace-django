@@ -55,7 +55,40 @@ function set_django_users() {
 # Is this folder a Django project of this plugin? The builder leaves .ddev/config.django.yaml in it.
 function django_is_project() {
   local project_path="$1";
-  [ -f "${project_path}/.ddev/config.django.yaml" ] ;
+  [ -f "${project_path}/.ddev/config.django.yaml" ] && return 0 ;
+  # On another runtime the plugin's claim, in the x-webship block (the core's rt_is_platform reads it).
+  declare -f rt_is_platform > /dev/null && rt_is_platform "${project_path}" django ;
+}
+
+# The runtime of the project in this folder, or of a new build (--runtime, else the workspace's
+# setting, else DDEV). A core without the runtime layer has DDEV only.
+function django_runtime() {
+  if declare -f runtime_of > /dev/null ; then runtime_of ; else echo 'ddev' ; fi
+}
+
+# The address of the site in this folder: https://<name>.ddev.site on DDEV, the runtime's own elsewhere
+# (http://127.0.0.1:<port> on Docker Compose and Podman, the node's address and a port on Kubernetes).
+function django_url() {
+  if declare -f rt_url > /dev/null ; then rt_url ; else echo "https://${PROJECT_NAME}.ddev.site" ; fi
+}
+
+# On another runtime than DDEV (webship/workspace#841): the plugin's claim, Python at the site's version as the stack's
+# own image, uv added to it (as on DDEV), and the Django server as the web container's own, once the build has made the
+# site (.ready): the same server as DDEV's daemon, from the project's folder, on DJANGO_PORT. It starts once the
+# database takes connections: on Kubernetes the web pod can start before the cluster's DNS and the database do (a
+# cluster started again), and a server that cannot reach the database as it starts waits for a file to change.
+function django_runtime_config() {
+  local python="$1" ;
+  rt_claim django || return 1 ;
+  rt_stack python "${python}" || return 1 ;
+  rt_web_build uv <<DOCKEREOF || return 1
+# uv (${DJANGO_UV_VERSION}), as on DDEV: the builder makes the site's virtual environment with it.
+ENV UV_LINK_MODE=copy
+RUN arch="\$(uname -m)" \\
+    && curl -sSfL "https://github.com/astral-sh/uv/releases/download/${DJANGO_UV_VERSION}/uv-\${arch}-unknown-linux-gnu.tar.gz" \\
+       | tar -xz --strip-components=1 -C /usr/local/bin
+DOCKEREOF
+  rt_serve "${DJANGO_PORT}" "while [ ! -f ${DJANGO_SITE}/.ready ] ; do sleep 2 ; done ; until pg_isready -q -h db -U db ; do sleep 2 ; done ; cd ${DJANGO_SITE} && exec ../.venv/bin/python manage.py runserver --insecure 0.0.0.0:${DJANGO_PORT}" ;
 }
 
 # Go to the project a tool was asked about, or say why not.
@@ -143,13 +176,19 @@ function django_wait() {
     sleep 2 ;
   done
   echo "The Django server did not start; the end of its log:" ;
-  ddev exec "supervisorctl tail webextradaemons:django stderr" < /dev/null 2>/dev/null ;
+  if [ "$(django_runtime)" == 'ddev' ] ; then ddev exec "supervisorctl tail webextradaemons:django stderr" < /dev/null 2>/dev/null ;
+  else ddev logs 2>/dev/null | tail -20 ; fi
   return 1 ;
 }
 
 # Start the Django server again (the daemon of the web container), and wait for it.
 function django_restart() {
-  ddev exec "supervisorctl restart webextradaemons:django" < /dev/null || return 1 ;
+  if [ "$(django_runtime)" == 'ddev' ] ; then
+    ddev exec "supervisorctl restart webextradaemons:django" < /dev/null || return 1 ;
+  else
+    # The server is the web container's own (rt_serve): the container starts again with it.
+    ddev restart < /dev/null > /dev/null || return 1 ;
+  fi
   django_wait ;
 }
 
@@ -182,7 +221,20 @@ print(base64.b64encode(json.dumps({
 # --polls the tutorial's app, and with --install its superuser.
 function django_build() {
   trim_project_name ;
-  local base_url="https://${PROJECT_NAME}.ddev.site" ;
+  local base_url runtime ;
+  runtime="$(django_runtime)" ;
+  if [ "${RUNTIME:-_none_}" != '_none_' ] && [ "${RUNTIME}" != "${runtime}" ] ; then
+    echo "--runtime ${RUNTIME} needs a Webship Workspace with the container runtimes (webship/workspace#694): update the workspace, or build on DDEV." ;
+    exit 1 ;
+  fi
+  if [ "${runtime}" != 'ddev' ] && ! declare -f rt_serve > /dev/null ; then
+    echo "Django on ${runtime} needs a Webship Workspace whose runtimes take an application's own language and server (webship/workspace#841, core 1.0.32 or later): update the workspace, or build on DDEV." ;
+    exit 1 ;
+  fi
+  case "${runtime}" in lando|docksal)
+    echo "Django on ${runtime} waits for the language stacks there (webship/workspace#841, its next step): build on DDEV, Docker Compose, Podman or Kubernetes." ;
+    exit 1 ;;
+  esac
   local version="${DJANGO_VERSION:-${site_django_version:-${DJANGO_DEFAULT_LINE}}}" ;
   local python="${PYTHON_VERSION:-${site_python_version:-${DJANGO_PYTHON}}}" ;
   local project_path="${WORKSPACE_ROOT}/${doc_name}/${PROJECT_NAME}" ;
@@ -203,7 +255,13 @@ function django_build() {
   # A generic web server: no nginx and no PHP are started. The database is PostgreSQL.
   ddev config --project-type=generic --webserver-type=generic --docroot="" --project-name=${PROJECT_NAME} \
     --database=postgres:16 --nodejs-version=$(ddev_nodejs_version) || exit 1 ;
-  django_write_ddev_config "${project_path}" "${python}" || exit 1 ;
+  if [ "${runtime}" == 'ddev' ] ; then
+    django_write_ddev_config "${project_path}" "${python}" || exit 1 ;
+  else
+    django_runtime_config "${python}" || { echo "The site's stack could not be written through the runtime layer." ; exit 1 ; } ;
+  fi
+  # The address is the runtime's to say, once the project is configured: never a written ddev.site.
+  base_url="$(django_url)" ;
   ddev_up start -y || exit 1 ;
 
   echo "Installing ${requirement} on Python ${python} in a virtual environment." ;
@@ -328,7 +386,7 @@ function django_manage_tool() {
     set_django_users ;
     cancel_django_users ;
   else
-    echo "${doc_name}/${PROJECT_NAME}: Django $(django_version) at https://${PROJECT_NAME}.ddev.site/admin/" ;
+    echo "${doc_name}/${PROJECT_NAME}: Django $(django_version) at $(django_url)/admin/" ;
     echo "" ; echo "Packages:" ;
     ddev exec "uv pip list --python ${DJANGO_ROOT}/.venv/bin/python 2>/dev/null | grep -i -E '^(django|psycopg)' | sed 's/^/   /'" < /dev/null ;
     echo "" ; echo "Apps:" ;
