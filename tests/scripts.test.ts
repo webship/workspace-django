@@ -185,7 +185,7 @@ const ADDRESSES: Record<string, string> = { docker: 'http://127.0.0.1:41234', po
  * (runtime_of, rt_url, rt_claim, rt_stack, rt_web_build, rt_serve), or '' for a core with no layer. `stacks` says
  * whether the layer has the language stacks (#841).
  */
-function build(layer: string, env: Record<string, string> = {}, { stacks = true } = {}) {
+function build(layer: string, env: Record<string, string> = {}, { stacks = true, landoDocksal = true } = {}) {
   const p = project('django');
   fs.rmSync(p.dir, { recursive: true });
   const log = path.join(p.root, 'ddev.log');
@@ -195,6 +195,8 @@ function build(layer: string, env: Record<string, string> = {}, { stacks = true 
     'trim_project_name() { :; } ; drop_database() { :; } ; ddev_nodejs_version() { echo 24 ; } ; ddev_up() { ddev "$@" ; } ; django_site() { echo "django_site $*" >> "$DDEV_LOG" ; }',
     layer ? `runtime_of() { echo "\${RUNTIME_ANSWER}" ; } ; rt_url() { [ "\${RUNTIME_ANSWER}" == ddev ] && echo "https://\${PROJECT_NAME}.ddev.site" || echo "${address}" ; } ; rt_claim() { echo "rt_claim $*" >> "${log}" ; } ; rt_is_platform() { return 1 ; }` : '',
     layer && stacks ? `rt_stack() { echo "rt_stack $*" >> "${log}" ; } ; rt_web_build() { echo "rt_web_build $1 <<< $(tr '\\n' '|')" >> "${log}" ; } ; rt_serve() { echo "rt_serve $1 [$2]" >> "${log}" ; }` : '',
+    // A core whose Lando and Docksal take an application's own language (webship/workspace#841, its second part).
+    layer && stacks && landoDocksal ? 'rt_lando_generic_write() { :; } ; rt_docksal_generic_write() { :; }' : '',
     `source ${FUNCTIONS}`,
     'django_build',
   ].join('\n');
@@ -237,7 +239,7 @@ test('on Docker Compose, Podman and Kubernetes the site is claimed, Python is th
   }
 });
 
-test('--runtime is refused, before anything is made, without the layer, without its language stacks, and on Lando and Docksal for now', () => {
+test('--runtime is refused, before anything is made, without the layer, without its language stacks, and on Lando and Docksal without them there', () => {
   const none = build('', { RUNTIME: 'docker' });
   assert.strictEqual(none.r.status, 1);
   assert.match(none.r.stdout, /--runtime docker needs a Webship Workspace with the container runtimes \(webship\/workspace#694\)/);
@@ -245,9 +247,9 @@ test('--runtime is refused, before anything is made, without the layer, without 
   assert.strictEqual(older.r.status, 1);
   assert.match(older.r.stdout, /Django on docker needs a Webship Workspace whose runtimes take an application's own language and server \(webship\/workspace#841, core 1\.0\.32 or later\)/);
   for (const runtime of ['lando', 'docksal']) {
-    const r = build(runtime, { RUNTIME: runtime });
+    const r = build(runtime, { RUNTIME: runtime }, { landoDocksal: false });
     assert.strictEqual(r.r.status, 1, runtime);
-    assert.match(r.r.stdout, new RegExp(`Django on ${runtime} waits for the language stacks there`));
+    assert.match(r.r.stdout, new RegExp(`Django on ${runtime} needs a Webship Workspace whose ${runtime} runtime takes an application's own language \\(webship/workspace#841, its second part\\)`));
     assert.deepStrictEqual(r.calls, [], runtime);
   }
 });
@@ -278,5 +280,18 @@ test('the builder takes --runtime; on another runtime the settings send the site
     assert.doesNotMatch(text, /SECURE_PROXY_SSL_HEADER/, `${runtime}: no router in front, so no proxy header`);
     assert.match(text, /CSRF_TRUSTED_ORIGINS = \["http:\/\/localhost:8000", "http:\/\/127\.0\.0\.1:8000"\]/);
     assert.match(text, /"host": "mail", "port": 1025/, `${runtime}: the mail goes to the stack's Mailpit`);
+  }
+});
+
+
+test('on Lando and Docksal the site is built in the runtime\'s own root: /app on Lando, /var/www on Docksal', () => {
+  for (const [runtime, root] of [['lando', '/app'], ['docksal', '/var/www']]) {
+    const b = build(runtime, { RUNTIME: runtime });
+    assert.strictEqual(b.r.status, 0, runtime + ': ' + b.r.stderr + b.r.stdout);
+    assert.deepStrictEqual(b.calls.slice(1, 5).map((c) => c.split(' <<<')[0].split(' [')[0]), ['rt_claim django', 'rt_stack python 3.13', 'rt_web_build uv', 'rt_serve 8000'], runtime);
+    const venv = b.calls.find((c) => c.includes('uv venv')) as string;
+    assert.ok(venv.includes(`${root}/.venv`), `${runtime}: ${venv}`);
+    assert.ok(!b.calls.some((c) => c.includes('/var/www/html')), `${runtime}: nothing of DDEV's root`);
+    assert.ok(!fs.existsSync(path.join(b.dir, '.ddev')), `${runtime}: nothing of DDEV's is written`);
   }
 });
