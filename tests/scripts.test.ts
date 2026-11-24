@@ -243,7 +243,7 @@ test('--runtime is refused, before anything is made, without the layer, without 
   assert.match(none.r.stdout, /--runtime docker needs a Webship Workspace with the container runtimes \(webship\/workspace#694\)/);
   const older = build('docker', { RUNTIME: 'docker' }, { stacks: false });
   assert.strictEqual(older.r.status, 1);
-  assert.match(older.r.stdout, /Django on docker needs a Webship Workspace whose runtimes take an application's own language and server \(webship\/workspace#841\)/);
+  assert.match(older.r.stdout, /Django on docker needs a Webship Workspace whose runtimes take an application's own language and server \(webship\/workspace#841, core 1\.0\.32 or later\)/);
   for (const runtime of ['lando', 'docksal']) {
     const r = build(runtime, { RUNTIME: runtime });
     assert.strictEqual(r.r.status, 1, runtime);

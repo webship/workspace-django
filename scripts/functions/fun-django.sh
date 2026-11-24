@@ -228,7 +228,7 @@ function django_build() {
     exit 1 ;
   fi
   if [ "${runtime}" != 'ddev' ] && ! declare -f rt_serve > /dev/null ; then
-    echo "Django on ${runtime} needs a Webship Workspace whose runtimes take an application's own language and server (webship/workspace#841): update the workspace, or build on DDEV." ;
+    echo "Django on ${runtime} needs a Webship Workspace whose runtimes take an application's own language and server (webship/workspace#841, core 1.0.32 or later): update the workspace, or build on DDEV." ;
     exit 1 ;
   fi
   case "${runtime}" in lando|docksal)

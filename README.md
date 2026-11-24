@@ -74,6 +74,7 @@ Everything the builder runs for a site runs in the site's own container, through
 | `ai/prompts/django-build-and-test.md`, `django-scenarios-for-an-area.md` | Two prompts: whole launch commands for a new session |
 | `src/index.ts` | `register(api)`: what the assistant is told about Django here |
 | `features/django.feature` | Scenarios for the dashboard's own browser suite |
+| `features/django-runtimes.feature` | The row of a site on Docker Compose and on Kubernetes: its state, its address, its runtime's menu, the test users of its Tests menu, the admin's login and the polls; the manifest's `featuresSite` builds the Docker Compose site in the plugin's CI |
 
 The `workspacePlugin` block in `package.json` is the manifest the installer reads.
 
@@ -111,9 +112,11 @@ bash cmd-django-project.sh mysite --install --add-users --polls
 | `--polls` | Add the polls app of the official tutorial, registered in the admin with the features most projects use, and its sample data (5 categories, 4 tags, 24 questions) |
 | `--django-version <x>` | A release line (`6.1`, the default and the current stable line; `5.2`, the long-term-support line) or one release, such as `6.1.3` |
 | `--python-version <x>` | The Python of the site: `3.12`, `3.13` (the default) or `3.14` |
+| `--runtime <name>` | The container runtime to build on: `ddev` (the default), `docker`, `podman` or `kubernetes`; `lando` and `docksal` are refused for now. See [Runtimes](#runtimes) |
 | `--launch` | Open the admin when it is ready |
 
-The site answers at `https://mysite.ddev.site`, the admin at `/admin/`. It is what
+On DDEV the site answers at `https://mysite.ddev.site`, the admin at `/admin/`; on another runtime at
+the address the build prints ([Runtimes](#runtimes)). It is what
 `django-admin startproject mysite` makes, in the project's `mysite/` folder; what the builder adds to
 its settings is in `mysite/mysite/site_settings.py` (the hosts and the proxy, the database, the
 mailbox of the container, `DEBUG` off so that the site answers with its real pages: a missing page is
@@ -128,6 +131,60 @@ projects use: fieldsets (one that folds), the inline choices (a table), `list_di
 stacked inline of its questions, a protected relation), tags (a two-list selector) and a read-only
 field. The step pack's features run on such a site.
 
+### Runtimes
+
+```bash
+bash cmd-django-project.sh mysite --install --add-users --polls                        # DDEV, the default
+bash cmd-django-project.sh mysite --install --add-users --polls --runtime docker       # Docker Compose
+bash cmd-django-project.sh mysite --install --add-users --polls --runtime podman       # Podman
+bash cmd-django-project.sh mysite --install --add-users --polls --runtime kubernetes   # a Kubernetes cluster
+```
+
+Without `--runtime` a build takes `container.runtime` of the workspace's `settings.yml`, then DDEV.
+Another runtime than DDEV needs a Webship Workspace whose runtimes take an application's own language
+and server: core 1.0.32 or later ([webship/workspace#841](https://github.com/webship/workspace/issues/841)).
+On an older one the builder refuses `--runtime` before anything is made. Lando and Docksal are refused for now:
+the language stacks reach them in the next part of #841.
+
+| | DDEV | Docker Compose | Podman | Kubernetes |
+| --- | --- | --- | --- | --- |
+| The build: `--install --add-users --polls` | Yes | Yes | Yes | Yes |
+| The admin: the logins, the viewer's 403, the polls | Yes | Yes | Yes | Yes |
+| `cmd-tools-django-manage.sh`: the site, `--run check`, `sendtestemail` | Yes | Yes | Yes | Yes |
+| The default accounts: cancel and add | Yes | Yes | Yes | Yes |
+| The site's mail in the mailbox | Yes | Yes | Yes | Yes |
+| The database: `ddev psql`, export, import | Yes | Yes | Yes | Yes |
+| `cmd-tools-testing.sh`: set up and run | Yes | Yes | Yes | Yes |
+| The step pack's examples, placed and run | Yes | Yes | Yes | Yes |
+| The dashboard's row: its menu, the test users, a test run | Yes | Yes | Yes | Yes |
+| The dashboard's row: stop and start, export, back up | Not yet run | Yes | Yes | Yes |
+| Removed: the row's Remove, or `cmd-tools-remove.sh` | Yes | Yes | Yes | Yes |
+
+"Yes" means it was run on a real site of that runtime. On Kubernetes the site also came back after its
+node stopped and started again: the server starts once the database takes connections.
+
+| Runtime | The site's address | What the project carries |
+| --- | --- | --- |
+| DDEV | `https://mysite.ddev.site` | `.ddev/config.yaml`, `.ddev/config.django.yaml`, `.ddev/web-build/Dockerfile.django` |
+| Docker Compose, Podman | `http://127.0.0.1:<port>`, printed by the build | `compose.yaml`, and `.webship/runtime/`: the stack's Dockerfile, uv's addition (`web-build/Dockerfile.uv`), the server (`serve.sh`) |
+| Kubernetes | `http://<node address>:<port>`, printed by the build | The same, and `k8s/` (the namespace `ws-mysite`) |
+
+What differs on Docker Compose, Podman and Kubernetes:
+
+- **The stack** is the core's Python stack.
+  - The image is `python:<version>-slim-bookworm` at the site's Python (`rt_stack`), with uv added to it (`rt_web_build`).
+  - The server, `manage.py runserver --insecure`, is the web container's own command (`rt_serve`). It starts once the database takes connections (`pg_isready`), and `ddev restart` starts it again. There is no DDEV daemon.
+- **The database** is the stack's `postgres:16` service, `db`, with `db` / `db` / `db`. `ddev psql` opens it, and an import takes the place of the database only when the dump is whole.
+- **The mail** goes to the stack's Mailpit, on the host `mail`. The mailbox is the runtime's (`rt_mail_url`).
+- **The settings** (`site_settings.py`) name no `ddev.site` and no proxy header. The site is reached over plain HTTP at its own address, an origin Django trusts by itself.
+- **The project** is claimed by the plugin (`rt_claim django`), so the row and the tools know it as a Django site without DDEV's files.
+- **HTTPS and a host name** are DDEV's: a runtime's address is plain HTTP.
+
+The same commands work on every runtime: `cmd-tools-django-manage.sh`, `cmd-tools-add-users.sh`,
+`cmd-tools-testing.sh`. The pattern is the Workspace's
+[`core/docs/plugins-on-runtimes.md`](https://github.com/webship/workspace/blob/1.0.x/core/docs/plugins-on-runtimes.md)
+("An application in another language").
+
 ### Work on a site
 
 ```bash
@@ -139,7 +196,7 @@ bash cmd-tools-django-manage.sh mysite --add-users                      # the de
 bash cmd-tools-django-manage.sh mysite --cancel-users                   # delete them
 ```
 
-On a start or a restart the container tool may print "Unable to start web_extra_daemons" with
+On DDEV, a start or a restart may print "Unable to start web_extra_daemons" with
 "supervisor.sock no such file": it asked before the web container was ready, and the container starts
 the server by itself a moment later. `--restart` starts it again and waits until it answers.
 
