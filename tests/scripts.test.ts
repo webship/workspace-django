@@ -174,3 +174,107 @@ test('the first feature names no platform in a step, and no password', () => {
   assert.doesNotMatch(feature, /dD\.123123ddd/);
   assert.doesNotMatch(feature, /createsuperuser|in the "Users" list with:/i, 'a suite never creates an account');
 });
+
+// ---- The runtimes: DDEV as before, and Docker Compose, Podman and Kubernetes through the core's language stacks (#841) ----
+
+const ADDRESSES: Record<string, string> = { docker: 'http://127.0.0.1:41234', podman: 'http://127.0.0.1:41234', kubernetes: 'http://172.18.0.2:30080' };
+
+/**
+ * The builder in a throwaway workspace, with `ddev` replaced by a recorder (`ddev exec` answering the server's check
+ * with 200), the site script by a stand-in, and the core's layer by stand-ins: `layer` is the runtime it answers with
+ * (runtime_of, rt_url, rt_claim, rt_stack, rt_web_build, rt_serve), or '' for a core with no layer. `stacks` says
+ * whether the layer has the language stacks (#841).
+ */
+function build(layer: string, env: Record<string, string> = {}, { stacks = true } = {}) {
+  const p = project('django');
+  fs.rmSync(p.dir, { recursive: true });
+  const log = path.join(p.root, 'ddev.log');
+  const address = ADDRESSES[layer] || '';
+  const prelude = [
+    `ddev() { echo "ddev $*" >> "${log}" ; [ "$1" == exec ] && [[ "$*" == *"curl -s -o /dev/null"* ]] && echo 200 ; [ -t 0 ] || cat > /dev/null ; return 0 ; }`,
+    'trim_project_name() { :; } ; drop_database() { :; } ; ddev_nodejs_version() { echo 24 ; } ; ddev_up() { ddev "$@" ; } ; django_site() { echo "django_site $*" >> "$DDEV_LOG" ; }',
+    layer ? `runtime_of() { echo "\${RUNTIME_ANSWER}" ; } ; rt_url() { [ "\${RUNTIME_ANSWER}" == ddev ] && echo "https://\${PROJECT_NAME}.ddev.site" || echo "${address}" ; } ; rt_claim() { echo "rt_claim $*" >> "${log}" ; } ; rt_is_platform() { return 1 ; }` : '',
+    layer && stacks ? `rt_stack() { echo "rt_stack $*" >> "${log}" ; } ; rt_web_build() { echo "rt_web_build $1 <<< $(tr '\\n' '|')" >> "${log}" ; } ; rt_serve() { echo "rt_serve $1 [$2]" >> "${log}" ; }` : '',
+    `source ${FUNCTIONS}`,
+    'django_build',
+  ].join('\n');
+  const r = spawnSync('bash', ['-c', prelude], { encoding: 'utf8', env: { ...process.env, WORKSPACE_ROOT: p.root, WORKSPACE_SCRIPTS: p.scripts, doc_name: 'dev', PROJECT_NAME: 'site1', DDEV_LOG: log,
+    INSTALL: 'yes', ADD_USERS: 'no', POLLS: 'no', LAUNCH: 'no', DJANGO_VERSION: '6.1', PYTHON_VERSION: '3.13',
+    RUNTIME: '_none_', RUNTIME_ANSWER: layer || 'ddev', account_name: 'owner1', account_mail: 'owner1@example.com', account_pass: 'Owner-pass-1234', ...env },
+    stdio: ['ignore', 'pipe', 'pipe'] });
+  const calls = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n').filter((c) => /^(ddev|rt_[a-z_]+) /.test(c)) : [];
+  return { r, calls, dir: path.join(p.root, 'dev', 'site1') };
+}
+
+test('on DDEV the build is what it was: the same commands with the layer and without it, the server a daemon of DDEV\'s web container', () => {
+  const without = build('');
+  const withLayer = build('ddev');
+  for (const b of [without, withLayer]) {
+    assert.strictEqual(b.r.status, 0, b.r.stderr + b.r.stdout);
+    assert.match(b.r.stdout, /Go to https:\/\/site1\.ddev\.site\/admin\/ and log in as owner1/);
+    assert.ok(fs.existsSync(path.join(b.dir, '.ddev', 'config.django.yaml')) && fs.existsSync(path.join(b.dir, '.ddev', 'web-build', 'Dockerfile.django')));
+    assert.ok(b.calls.includes('ddev exec supervisorctl restart webextradaemons:django'), 'the server restarted as DDEV\'s daemon');
+  }
+  assert.deepStrictEqual(withLayer.calls, without.calls);
+  assert.ok(!withLayer.calls.some((c) => c.startsWith('rt_')), 'nothing through the layer on DDEV');
+});
+
+test('on Docker Compose, Podman and Kubernetes the site is claimed, Python is the stack\'s own image at the site\'s version, uv is added, and the server is the web container\'s own', () => {
+  for (const runtime of Object.keys(ADDRESSES)) {
+    const b = build(runtime, { RUNTIME: runtime });
+    assert.strictEqual(b.r.status, 0, runtime + ': ' + b.r.stderr + b.r.stdout);
+    assert.match(b.calls[0], /^ddev config --project-type=generic --webserver-type=generic --docroot= --project-name=site1 --database=postgres:16 /, runtime);
+    assert.deepStrictEqual(b.calls.slice(1, 5).map((c) => c.split(' <<<')[0].split(' [')[0]), ['rt_claim django', 'rt_stack python 3.13', 'rt_web_build uv', 'rt_serve 8000'], runtime);
+    assert.match(b.calls[3], /releases\/download\/0\.13\.7\/uv-/, `${runtime}: the uv of DDEV's build`);
+    assert.strictEqual(b.calls[4], 'rt_serve 8000 [while [ ! -f mysite/.ready ] ; do sleep 2 ; done ; cd mysite && exec ../.venv/bin/python manage.py runserver --insecure 0.0.0.0:8000]', runtime);
+    assert.ok(b.calls.includes('ddev restart'), `${runtime}: the web container starts again with the server`);
+    assert.ok(!b.calls.some((c) => c.includes('supervisorctl')), `${runtime}: no DDEV daemon`);
+    assert.ok(!fs.existsSync(path.join(b.dir, '.ddev')), `${runtime}: nothing of DDEV's is written`);
+    assert.ok(b.r.stdout.includes(`Go to ${ADDRESSES[runtime]}/admin/ and log in as owner1`), `${runtime}: ${b.r.stdout}`);
+    assert.doesNotMatch(b.r.stdout, /ddev\.site/, runtime);
+  }
+});
+
+test('--runtime is refused, before anything is made, without the layer, without its language stacks, and on Lando and Docksal for now', () => {
+  const none = build('', { RUNTIME: 'docker' });
+  assert.strictEqual(none.r.status, 1);
+  assert.match(none.r.stdout, /--runtime docker needs a Webship Workspace with the container runtimes \(webship\/workspace#694\)/);
+  const older = build('docker', { RUNTIME: 'docker' }, { stacks: false });
+  assert.strictEqual(older.r.status, 1);
+  assert.match(older.r.stdout, /Django on docker needs a Webship Workspace whose runtimes take an application's own language and server \(webship\/workspace#841\)/);
+  for (const runtime of ['lando', 'docksal']) {
+    const r = build(runtime, { RUNTIME: runtime });
+    assert.strictEqual(r.r.status, 1, runtime);
+    assert.match(r.r.stdout, new RegExp(`Django on ${runtime} waits for the language stacks there`));
+    assert.deepStrictEqual(r.calls, [], runtime);
+  }
+});
+
+test('the builder takes --runtime; on another runtime the settings send the site\'s mail to the stack\'s Mailpit', () => {
+  const args = fs.readFileSync(path.join(PKG, 'scripts', 'args', 'arg-django.sh'), 'utf8');
+  assert.match(args, /parser\.add_argument\('--runtime',\s*dest='RUNTIME',\s*default="_none_",\s*choices=\['ddev', 'docker', 'podman', 'kubernetes', 'lando', 'docksal'\]/);
+  // The settings the script really writes, for a project of manage.py's own shape, on DDEV and on a runtime.
+  const written = (runtime: string): string => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'django-settings-'));
+    fs.mkdirSync(path.join(dir, 'mysite'));
+    fs.writeFileSync(path.join(dir, 'manage.py'), "os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'mysite.settings')\n");
+    fs.writeFileSync(path.join(dir, 'mysite', 'settings.py'), 'DEBUG = True\n');
+    const env: NodeJS.ProcessEnv = { ...process.env };
+    if (runtime) env.WEBSHIP_RUNTIME = runtime; else delete env.WEBSHIP_RUNTIME;
+    const r = spawnSync('python3', [path.join(PKG, 'scripts', 'django-site.py'), 'settings'], { cwd: dir, env, encoding: 'utf8' });
+    assert.strictEqual(r.status, 0, r.stderr);
+    const text = fs.readFileSync(path.join(dir, 'mysite', 'site_settings.py'), 'utf8');
+    fs.rmSync(dir, { recursive: true, force: true });
+    return text;
+  };
+  const ddev = written('');
+  assert.match(ddev, /CSRF_TRUSTED_ORIGINS = \["https:\/\/\*\.ddev\.site", "http:\/\/\*\.ddev\.site"/, 'DDEV as before');
+  assert.match(ddev, /SECURE_PROXY_SSL_HEADER = \("HTTP_X_FORWARDED_PROTO", "https"\)/);
+  for (const runtime of ['docker', 'podman', 'kubernetes']) {
+    const text = written(runtime);
+    assert.doesNotMatch(text, /ddev\.site/, `${runtime}: nothing of ddev.site`);
+    assert.doesNotMatch(text, /SECURE_PROXY_SSL_HEADER/, `${runtime}: no router in front, so no proxy header`);
+    assert.match(text, /CSRF_TRUSTED_ORIGINS = \["http:\/\/localhost:8000", "http:\/\/127\.0\.0\.1:8000"\]/);
+    assert.match(text, /"host": "mail", "port": 1025/, `${runtime}: the mail goes to the stack's Mailpit`);
+  }
+});

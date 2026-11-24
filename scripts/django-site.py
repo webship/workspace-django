@@ -98,7 +98,16 @@ else:
 
 def write_settings():
     package = HERE / project_package()
-    (package / "site_settings.py").write_text(SITE_SETTINGS)
+    text = SITE_SETTINGS
+    # On another runtime than DDEV (the layer sets WEBSHIP_RUNTIME in the web container) the mailbox is the stack's
+    # Mailpit service, on the host mail; on DDEV it answers in the web container, as before.
+    if os.environ.get("WEBSHIP_RUNTIME"):
+        text = text.replace('"host": "127.0.0.1", "port": 1025', '"host": "mail", "port": 1025').replace('EMAIL_HOST = "127.0.0.1"', 'EMAIL_HOST = "mail"')
+        # No router in front: the site is reached at its runtime's own address over plain http, which Django trusts
+        # by itself (the Origin of a form is the site's own host), so no other origin is named, and no proxy header.
+        text = text.replace("# The site is reached through the router of the container tool, over https.", "# The site is reached at its runtime's own address, over plain http: Django trusts its own origin.")
+        text = text.replace('CSRF_TRUSTED_ORIGINS = ["https://*.ddev.site", "http://*.ddev.site", "http://localhost:8000", "http://127.0.0.1:8000"]\nSECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")\n', 'CSRF_TRUSTED_ORIGINS = ["http://localhost:8000", "http://127.0.0.1:8000"]\n')
+    (package / "site_settings.py").write_text(text)
     settings = package / "settings.py"
     text = settings.read_text()
     if "site_settings" not in text:
