@@ -226,7 +226,9 @@ test('on Docker Compose, Podman and Kubernetes the site is claimed, Python is th
     assert.match(b.calls[0], /^ddev config --project-type=generic --webserver-type=generic --docroot= --project-name=site1 --database=postgres:16 /, runtime);
     assert.deepStrictEqual(b.calls.slice(1, 5).map((c) => c.split(' <<<')[0].split(' [')[0]), ['rt_claim django', 'rt_stack python 3.13', 'rt_web_build uv', 'rt_serve 8000'], runtime);
     assert.match(b.calls[3], /releases\/download\/0\.13\.7\/uv-/, `${runtime}: the uv of DDEV's build`);
-    assert.strictEqual(b.calls[4], 'rt_serve 8000 [while [ ! -f mysite/.ready ] ; do sleep 2 ; done ; cd mysite && exec ../.venv/bin/python manage.py runserver --insecure 0.0.0.0:8000]', runtime);
+    // Once the site is made, and once the database takes connections: a Kubernetes cluster started again can start the
+    // web pod before its DNS and the database.
+    assert.strictEqual(b.calls[4], 'rt_serve 8000 [while [ ! -f mysite/.ready ] ; do sleep 2 ; done ; until pg_isready -q -h db -U db ; do sleep 2 ; done ; cd mysite && exec ../.venv/bin/python manage.py runserver --insecure 0.0.0.0:8000]', runtime);
     assert.ok(b.calls.includes('ddev restart'), `${runtime}: the web container starts again with the server`);
     assert.ok(!b.calls.some((c) => c.includes('supervisorctl')), `${runtime}: no DDEV daemon`);
     assert.ok(!fs.existsSync(path.join(b.dir, '.ddev')), `${runtime}: nothing of DDEV's is written`);

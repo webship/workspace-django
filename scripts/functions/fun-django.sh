@@ -74,7 +74,9 @@ function django_url() {
 
 # On another runtime than DDEV (webship/workspace#841): the plugin's claim, Python at the site's version as the stack's
 # own image, uv added to it (as on DDEV), and the Django server as the web container's own, once the build has made the
-# site (.ready): the same server as DDEV's daemon, from the project's folder, on DJANGO_PORT.
+# site (.ready): the same server as DDEV's daemon, from the project's folder, on DJANGO_PORT. It starts once the
+# database takes connections: on Kubernetes the web pod can start before the cluster's DNS and the database do (a
+# cluster started again), and a server that cannot reach the database as it starts waits for a file to change.
 function django_runtime_config() {
   local python="$1" ;
   rt_claim django || return 1 ;
@@ -86,7 +88,7 @@ RUN arch="\$(uname -m)" \\
     && curl -sSfL "https://github.com/astral-sh/uv/releases/download/${DJANGO_UV_VERSION}/uv-\${arch}-unknown-linux-gnu.tar.gz" \\
        | tar -xz --strip-components=1 -C /usr/local/bin
 DOCKEREOF
-  rt_serve "${DJANGO_PORT}" "while [ ! -f ${DJANGO_SITE}/.ready ] ; do sleep 2 ; done ; cd ${DJANGO_SITE} && exec ../.venv/bin/python manage.py runserver --insecure 0.0.0.0:${DJANGO_PORT}" ;
+  rt_serve "${DJANGO_PORT}" "while [ ! -f ${DJANGO_SITE}/.ready ] ; do sleep 2 ; done ; until pg_isready -q -h db -U db ; do sleep 2 ; done ; cd ${DJANGO_SITE} && exec ../.venv/bin/python manage.py runserver --insecure 0.0.0.0:${DJANGO_PORT}" ;
 }
 
 # Go to the project a tool was asked about, or say why not.
