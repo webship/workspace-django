@@ -23,8 +23,11 @@ readonly DJANGO_STEPS_PACKAGE='@webship-js/django-steps';
 readonly DJANGO_STEPS_VERSION='^2.0.0';
 
 # Where the site lives in the web container: the virtual environment, the project that
-# django-admin startproject makes, and the port the server listens on.
-readonly DJANGO_ROOT='/var/www/html';
+# django-admin startproject makes, and the port the server listens on. The project's root in its container is
+# the runtime's: /var/www/html on DDEV, Docker Compose, Podman and Kubernetes, /app on Lando, /var/www on Docksal.
+function django_root() {
+  case "$(django_runtime)" in lando) echo '/app' ;; docksal) echo '/var/www' ;; *) echo '/var/www/html' ;; esac
+}
 readonly DJANGO_SITE='mysite';
 readonly DJANGO_PORT='8000';
 
@@ -122,8 +125,8 @@ web_extra_exposed_ports:
     https_port: 443
 web_extra_daemons:
   - name: django
-    command: "bash -c 'while [ ! -f ${DJANGO_ROOT}/${DJANGO_SITE}/.ready ]; do sleep 2; done; cd ${DJANGO_ROOT}/${DJANGO_SITE} && exec ${DJANGO_ROOT}/.venv/bin/python manage.py runserver --insecure 0.0.0.0:${DJANGO_PORT}'"
-    directory: ${DJANGO_ROOT}
+    command: "bash -c 'while [ ! -f $(django_root)/${DJANGO_SITE}/.ready ]; do sleep 2; done; cd $(django_root)/${DJANGO_SITE} && exec $(django_root)/.venv/bin/python manage.py runserver --insecure 0.0.0.0:${DJANGO_PORT}'"
+    directory: $(django_root)
 web_environment:
   - PYTHONUNBUFFERED=1
 YAMLEOF
@@ -144,12 +147,12 @@ DOCKEREOF
 
 # manage.py in the container, with the Python of the site's virtual environment.
 function django_manage() {
-  ddev exec -d "${DJANGO_ROOT}/${DJANGO_SITE}" "${DJANGO_ROOT}/.venv/bin/python manage.py $*" < /dev/null ;
+  ddev exec -d "$(django_root)/${DJANGO_SITE}" "$(django_root)/.venv/bin/python manage.py $*" < /dev/null ;
 }
 
 # The release of Django the site runs.
 function django_version() {
-  ddev exec "${DJANGO_ROOT}/.venv/bin/python -c 'import django; print(django.get_version())'" < /dev/null 2>/dev/null | tr -d '\r' ;
+  ddev exec "$(django_root)/.venv/bin/python -c 'import django; print(django.get_version())'" < /dev/null 2>/dev/null | tr -d '\r' ;
 }
 
 # The pip requirement for a --django-version: a release line ("6.1": its latest release) or one
@@ -214,7 +217,7 @@ print(base64.b64encode(json.dumps({
     "owner": {"name": os.environ["DJANGO_OWNER_NAME"], "email": os.environ["DJANGO_OWNER_MAIL"], "password": os.environ["DJANGO_OWNER_PASS"]},
     "accounts": accounts,
 }).encode()).decode())')" || return 1 ;
-  ddev exec -d "${DJANGO_ROOT}/${DJANGO_SITE}" "DJANGO_SITE_ACCOUNTS=${payload} ${DJANGO_ROOT}/.venv/bin/python - $*" < "${script}" ;
+  ddev exec -d "$(django_root)/${DJANGO_SITE}" "DJANGO_SITE_ACCOUNTS=${payload} $(django_root)/.venv/bin/python - $*" < "${script}" ;
 }
 
 # Build a Django site from nothing: the container, the packages, the project, the database, with
@@ -231,9 +234,13 @@ function django_build() {
     echo "Django on ${runtime} needs a Webship Workspace whose runtimes take an application's own language and server (webship/workspace#841, core 1.0.32 or later): update the workspace, or build on DDEV." ;
     exit 1 ;
   fi
+  # Lando and Docksal take an application's own language from the core's second part of #841 (rt_lando_generic_write,
+  # rt_docksal_generic_write); an older core builds a php stack there, which a Django site is not.
   case "${runtime}" in lando|docksal)
-    echo "Django on ${runtime} waits for the language stacks there (webship/workspace#841, its next step): build on DDEV, Docker Compose, Podman or Kubernetes." ;
-    exit 1 ;;
+    if ! declare -f "rt_${runtime}_generic_write" > /dev/null ; then
+      echo "Django on ${runtime} needs a Webship Workspace whose ${runtime} runtime takes an application's own language (webship/workspace#841, its second part): update the workspace, or build on DDEV, Docker Compose, Podman or Kubernetes." ;
+      exit 1 ;
+    fi ;;
   esac
   local version="${DJANGO_VERSION:-${site_django_version:-${DJANGO_DEFAULT_LINE}}}" ;
   local python="${PYTHON_VERSION:-${site_python_version:-${DJANGO_PYTHON}}}" ;
@@ -265,11 +272,11 @@ function django_build() {
   ddev_up start -y || exit 1 ;
 
   echo "Installing ${requirement} on Python ${python} in a virtual environment." ;
-  ddev exec "uv venv --clear --seed --python ${python} ${DJANGO_ROOT}/.venv && uv pip install --python ${DJANGO_ROOT}/.venv/bin/python '${requirement}' 'psycopg[binary]'" < /dev/null \
+  ddev exec "uv venv --clear --seed --python ${python} $(django_root)/.venv && uv pip install --python $(django_root)/.venv/bin/python '${requirement}' 'psycopg[binary]'" < /dev/null \
     || { echo "The install of Django failed." ; exit 1 ; } ;
 
   # A plain project, as the tutorial makes it, and the settings of the container.
-  ddev exec "rm -rf ${DJANGO_ROOT}/${DJANGO_SITE} && ${DJANGO_ROOT}/.venv/bin/django-admin startproject ${DJANGO_SITE}" < /dev/null \
+  ddev exec "rm -rf $(django_root)/${DJANGO_SITE} && $(django_root)/.venv/bin/django-admin startproject ${DJANGO_SITE}" < /dev/null \
     || { echo "django-admin startproject failed." ; exit 1 ; } ;
   users=() ;
   django_site settings || exit 1 ;
@@ -372,7 +379,7 @@ function django_manage_tool() {
     local installed line ;
     installed="$(django_version)" ; line="$(echo "${installed}" | cut -d. -f1,2)" ;
     echo "Django ${installed} is installed." ;
-    ddev exec "uv pip install --python ${DJANGO_ROOT}/.venv/bin/python --upgrade 'Django~=${line}.0'" < /dev/null || exit 1 ;
+    ddev exec "uv pip install --python $(django_root)/.venv/bin/python --upgrade 'Django~=${line}.0'" < /dev/null || exit 1 ;
     django_manage migrate --noinput || exit 1 ;
     django_restart || exit 1 ;
     echo "Django $(django_version) is running." ;
@@ -388,7 +395,7 @@ function django_manage_tool() {
   else
     echo "${doc_name}/${PROJECT_NAME}: Django $(django_version) at $(django_url)/admin/" ;
     echo "" ; echo "Packages:" ;
-    ddev exec "uv pip list --python ${DJANGO_ROOT}/.venv/bin/python 2>/dev/null | grep -i -E '^(django|psycopg)' | sed 's/^/   /'" < /dev/null ;
+    ddev exec "uv pip list --python $(django_root)/.venv/bin/python 2>/dev/null | grep -i -E '^(django|psycopg)' | sed 's/^/   /'" < /dev/null ;
     echo "" ; echo "Apps:" ;
     django_manage shell -v 0 -c "\"from django.apps import apps; print('   ' + ', '.join(a.label for a in apps.get_app_configs()))\"" ;
     echo "" ; echo "Accounts:" ;
