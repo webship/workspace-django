@@ -1,6 +1,6 @@
 Feature: A site on Docker Compose and on Kubernetes
-  The builder builds on DDEV by default, and with --runtime on Docker Compose, Podman or Kubernetes (Lando and
-  Docksal wait for the language stacks there). A site built on Docker Compose or Kubernetes has the row a DDEV site has: its state, its own
+  The builder builds on DDEV by default, and with --runtime on Docker Compose, Podman, Kubernetes, Lando or
+  Docksal. A site built on Docker Compose or Kubernetes has the row a DDEV site has: its state, its own
   address, the runtime's menu, and the test users of the plugin in its Tests menu.
 
   # Each scenario drives a real site of that runtime, built with cmd-django-project.sh --runtime: the first running

@@ -112,7 +112,7 @@ bash cmd-django-project.sh mysite --install --add-users --polls
 | `--polls` | Add the polls app of the official tutorial, registered in the admin with the features most projects use, and its sample data (5 categories, 4 tags, 24 questions) |
 | `--django-version <x>` | A release line (`6.1`, the default and the current stable line; `5.2`, the long-term-support line) or one release, such as `6.1.3` |
 | `--python-version <x>` | The Python of the site: `3.12`, `3.13` (the default) or `3.14` |
-| `--runtime <name>` | The container runtime to build on: `ddev` (the default), `docker`, `podman` or `kubernetes`; `lando` and `docksal` are refused for now. See [Runtimes](#runtimes) |
+| `--runtime <name>` | The container runtime to build on: `ddev` (the default), `docker`, `podman`, `kubernetes`, `lando` or `docksal`. See [Runtimes](#runtimes) |
 | `--launch` | Open the admin when it is ready |
 
 On DDEV the site answers at `https://mysite.ddev.site`, the admin at `/admin/`; on another runtime at
@@ -138,27 +138,30 @@ bash cmd-django-project.sh mysite --install --add-users --polls                 
 bash cmd-django-project.sh mysite --install --add-users --polls --runtime docker       # Docker Compose
 bash cmd-django-project.sh mysite --install --add-users --polls --runtime podman       # Podman
 bash cmd-django-project.sh mysite --install --add-users --polls --runtime kubernetes   # a Kubernetes cluster
+bash cmd-django-project.sh mysite --install --add-users --polls --runtime lando        # Lando
+bash cmd-django-project.sh mysite --install --add-users --polls --runtime docksal      # Docksal
 ```
 
 Without `--runtime` a build takes `container.runtime` of the workspace's `settings.yml`, then DDEV.
 Another runtime than DDEV needs a Webship Workspace whose runtimes take an application's own language
 and server: core 1.0.32 or later ([webship/workspace#841](https://github.com/webship/workspace/issues/841)).
-On an older one the builder refuses `--runtime` before anything is made. Lando and Docksal are refused for now:
-the language stacks reach them in the next part of #841.
+On an older one the builder refuses `--runtime` before anything is made. Lando and Docksal take it from
+the second part of #841 on ([webship/workspace#854](https://github.com/webship/workspace/pull/854)); on a core
+before it, the builder refuses them, and says so.
 
-| | DDEV | Docker Compose | Podman | Kubernetes |
-| --- | --- | --- | --- | --- |
-| The build: `--install --add-users --polls` | Yes | Yes | Yes | Yes |
-| The admin: the logins, the viewer's 403, the polls | Yes | Yes | Yes | Yes |
-| `cmd-tools-django-manage.sh`: the site, `--run check`, `sendtestemail` | Yes | Yes | Yes | Yes |
-| The default accounts: cancel and add | Yes | Yes | Yes | Yes |
-| The site's mail in the mailbox | Yes | Yes | Yes | Yes |
-| The database: `ddev psql`, export, import | Yes | Yes | Yes | Yes |
-| `cmd-tools-testing.sh`: set up and run | Yes | Yes | Yes | Yes |
-| The step pack's examples, placed and run | Yes | Yes | Yes | Yes |
-| The dashboard's row: its menu, the test users, a test run | Yes | Yes | Yes | Yes |
-| The dashboard's row: stop and start, export, back up | Not yet run | Yes | Yes | Yes |
-| Removed: the row's Remove, or `cmd-tools-remove.sh` | Yes | Yes | Yes | Yes |
+| | DDEV | Docker Compose | Podman | Kubernetes | Lando | Docksal |
+| --- | --- | --- | --- | --- | --- | --- |
+| The build: `--install --add-users --polls` | Yes | Yes | Yes | Yes | Yes | Yes |
+| The admin: the logins, the viewer's 403, the polls | Yes | Yes | Yes | Yes | Yes | Yes |
+| `cmd-tools-django-manage.sh`: the site, `--run check`, `sendtestemail` | Yes | Yes | Yes | Yes | Yes | Yes |
+| The default accounts: cancel and add | Yes | Yes | Yes | Yes | Yes | Yes |
+| The site's mail in the mailbox | Yes | Yes | Yes | Yes | Yes | Yes |
+| The database: `ddev psql`, export, import | Yes | Yes | Yes | Yes | Yes | Yes |
+| `cmd-tools-testing.sh`: set up and run | Yes | Yes | Yes | Yes | Yes | Yes |
+| The step pack's examples, placed and run | Yes | Yes | Yes | Yes | Yes | Yes |
+| The dashboard's row: its menu, the test users, a test run | Yes | Yes | Yes | Yes | Yes | Yes |
+| The dashboard's row: stop and start, export, back up | Not yet run | Yes | Yes | Yes | Yes | Yes |
+| Removed: the row's Remove, or `cmd-tools-remove.sh` | Yes | Yes | Yes | Yes | Yes | Yes |
 
 "Yes" means it was run on a real site of that runtime. On Kubernetes the site also came back after its
 node stopped and started again: the server starts once the database takes connections.
@@ -168,17 +171,19 @@ node stopped and started again: the server starts once the database takes connec
 | DDEV | `https://mysite.ddev.site` | `.ddev/config.yaml`, `.ddev/config.django.yaml`, `.ddev/web-build/Dockerfile.django` |
 | Docker Compose, Podman | `http://127.0.0.1:<port>`, printed by the build | `compose.yaml`, and `.webship/runtime/`: the stack's Dockerfile, uv's addition (`web-build/Dockerfile.uv`), the server (`serve.sh`) |
 | Kubernetes | `http://<node address>:<port>`, printed by the build | The same, and `k8s/` (the namespace `ws-mysite`) |
+| Lando | `http://127.0.0.1:<port>`, printed by the build (Lando's proxy stays off) | `.lando.yml`, and the same `.webship/runtime/`; the site lives at `/app` in its container |
+| Docksal | `http://mysite.docksal.site`, on Docksal's own proxy | `.docksal/docksal.env`, `.docksal/docksal.yml`, and the same `.webship/runtime/`; the site lives at `/var/www` in its container |
 
-What differs on Docker Compose, Podman and Kubernetes:
+What differs on the runtimes other than DDEV:
 
 - **The stack** is the core's Python stack.
   - The image is `python:<version>-slim-bookworm` at the site's Python (`rt_stack`), with uv added to it (`rt_web_build`).
   - The server, `manage.py runserver --insecure`, is the web container's own command (`rt_serve`). It starts once the database takes connections (`pg_isready`), and `ddev restart` starts it again. There is no DDEV daemon.
 - **The database** is the stack's `postgres:16` service, `db`, with `db` / `db` / `db`. `ddev psql` opens it, and an import takes the place of the database only when the dump is whole.
-- **The mail** goes to the stack's Mailpit, on the host `mail`. The mailbox is the runtime's (`rt_mail_url`).
+- **The mail** goes to the stack's Mailpit, on the host `mail`. The mailbox is the runtime's (`rt_mail_url`): on Docksal `http://mail.mysite.docksal.site`.
 - **The settings** (`site_settings.py`) name no `ddev.site` and no proxy header. The site is reached over plain HTTP at its own address, an origin Django trusts by itself.
 - **The project** is claimed by the plugin (`rt_claim django`), so the row and the tools know it as a Django site without DDEV's files.
-- **HTTPS and a host name** are DDEV's: a runtime's address is plain HTTP.
+- **HTTPS** is DDEV's: a runtime's address is plain HTTP, and only Docksal's has a host name of its own.
 
 The same commands work on every runtime: `cmd-tools-django-manage.sh`, `cmd-tools-add-users.sh`,
 `cmd-tools-testing.sh`. The pattern is the Workspace's

@@ -41,7 +41,7 @@ export function assistantContext(): string {
     'a plain project made with django-admin startproject (the current stable line, or `--django-version 5.2` for the long-term-support line),',
     'with `--polls` the polls app of the official tutorial registered in the admin and its sample data,',
     'in a container like every other project: on DDEV (the default) a generic project, Python in the web image, the server as a daemon, PostgreSQL, its admin at https://<name>.ddev.site/admin/;',
-    'with `--runtime docker`, `podman` or `kubernetes` the core\'s Python stack, the server through rt_serve, PostgreSQL, its admin at the address the runtime gives (the row links it; Lando and Docksal are refused for now).',
+    'with `--runtime docker`, `podman`, `kubernetes`, `lando` or `docksal` the core\'s Python stack, the server through rt_serve, PostgreSQL, its admin at the address the runtime gives (the row links it).',
     '`bash cmd-tools-django-manage.sh <name>` says what the site is; `--run "<command> <args>"` runs a manage.py command in it,',
     '`--update` updates Django within its line, `--restart` starts the server again,',
     '`--add-users` adds the default accounts (administrator, editor, viewer) and `--cancel-users` deletes them.',
